@@ -1,0 +1,88 @@
+#!/usr/bin/env node
+
+"use strict";
+/*jslint nomen: true */
+
+var program = require('commander');
+
+function range(val) {
+    return val.split('..').map(Number);
+}
+
+// Parse args
+program
+    .version('0.1')
+    .usage('[options] <file> [<target>]')
+    .option('-r, --range <a>..<b>', '[Required] Frames range (starting and ending frames for animation sequence)', range)
+    .option('-z, --zoom <a>', 'Zoom level (defaults to 1)', parseFloat, 1)
+    .option('-f, --framerate <n>', 'Frame rate (defaults to 30 fps)', parseInt, 30)
+    .option('-b, --background <c>', 'Background color')
+    .option('-t, --transparent', 'Transform background color to transparent in resulting gif')
+    .parse(process.argv);
+
+// Check args
+if (program.args.length === 0 || program.args.length > 2) {
+    console.log('Incorrect number of arguments supplied');
+    program.outputHelp();
+    process.exit(1);
+}
+
+program.range = program.range || [];
+if (program.range.length !== 2) {
+    console.log('Range not provided');
+    program.outputHelp();
+    process.exit(1);
+}
+
+if (!program.background && program.transparent) {
+    console.log('Transparency may be only applied with a background color set');
+    program.outputHelp();
+    process.exit(1);
+}
+
+
+// Get temporary directory
+var path = require('path');
+var childProcess = require('child_process');
+var phantomjs = require('phantomjs');
+var tmp = require('tmp');
+
+tmp.dir(function (err, tmpdir) {
+    if (err) { throw err; }
+
+    // Render frames with desired settings
+    var renderArgs = [path.join(__dirname, 'phantomjs-script.js'),
+                      program.args[0], tmpdir, program.framerate,
+                      program.range[0] + '..' + program.range[1],
+                      program.zoom ];
+
+    console.log("Rendering PNGs...");
+
+    if (program.background) {
+        renderArgs.push(program.background);
+    }
+
+    childProcess.execFile(phantomjs.path, renderArgs, function (err) {
+        if (err) { throw err; }
+
+        var im = require('imagemagick'),
+            target = program.args[1] || path.basename(program.args[0], path.extname(program.args[0])) + '.gif',
+            convertArgs = ['-dispose', 'previous', '-delay', 100 / program.framerate];
+
+        console.log("Creating GIF...");
+        if (program.args.length === 1) {
+            console.log("Target name: " + target);
+        }
+
+        // Use imagemagick's convert tool to assemble the gif
+        // var im = require('imagemagick');
+        if (program.transparent) {
+            convertArgs.push('-transparent', program.background);
+        }
+        convertArgs.push(tmpdir + '/*.png', target);
+
+        im.convert(convertArgs, function (err) {
+            if (err) { throw err; }
+        });
+    });
+});
